@@ -69,10 +69,29 @@ app.post('/chat', async(req: Request, res: Response): Promise<any> => {
             return res.status(404).json({error: 'User not found!'})
         }
 
-        res.status(200).json({message: 'success'})
+        const response = await openai.chat.completions.create({
+            model: 'gpt-4',
+            messages: [{role: 'user', content: message}]
+        })
+
+        const aiMessage: string = response.choices[0].message?.content ?? 'No response from AI';
+
+        // create channel 
+
+        const channel = chatClient.channel('messaging', `chat-${userId}`, {
+            name: 'AI Chat',
+            created_by_id: 'ai_bit'
+        })
+
+        await channel.create();
+        await channel.sendMessage({text: aiMessage, user_id: 'ai_bot'})
+
+
+
+        res.status(200).json({reply: aiMessage})
     }
     catch {
-            return res.status(500).json({error: 'Internal Server Error!'})
+        return res.status(500).json({error: 'Internal Server Error!'})
     }
 })
 
