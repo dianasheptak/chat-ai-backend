@@ -97,11 +97,35 @@ app.post('/chat', async(req: Request, res: Response): Promise<any> => {
         if (!existingUser.length) {
             return res.status(404).json({error: 'User not found in database, please register first!'})
         }
-            
+
+        // fetch context
+          const chatHistory = await db
+            .select()
+            .from(chats)
+            .where(eq(chats.userId, userId))
+            .orderBy(chats.createdAt)
+            .limit(15)
+
+
+
+        const conversation: ChatCompletionMessageParam[] = chatHistory.flatMap((chat) => [
+            {
+                role: 'user', 
+                content: chat.message
+            },
+             {
+                role: 'assistant', 
+                content: chat.reply
+            },
+        ])    
+
+        // add latest user messages to conversation
+
+        conversation.push({ role: 'user', content: message });
 
         const response = await openai.chat.completions.create({
             model: 'gpt-4',
-            messages: [{role: 'user', content: message}]
+            messages: conversation as ChatCompletionMessageParam[]
         })
 
         const aiMessage: string = response.choices[0].message?.content ?? 'No response from AI';
