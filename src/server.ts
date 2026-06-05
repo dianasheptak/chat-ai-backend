@@ -41,7 +41,7 @@ app.post('/register-user', async (req: Request, res: Response): Promise<any> => 
     }
 
     try {
-        const userId = email.replace(/[^a-zA-Z0-9_-]/g, '_s')
+        const userId = email.replace(/[^a-zA-Z0-9_-]/g, '_')
 
         const userResponse = await chatClient.queryUsers({id: { $eq: userId}})
 
