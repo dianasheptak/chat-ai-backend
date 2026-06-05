@@ -3,6 +3,10 @@ import cors from "cors";
 import dotenv from "dotenv";
 import { StreamChat } from "stream-chat";
 import OpenAI from "openai";
+import { db } from "./config/database.js";
+import { chats, users } from "./db/schema.js";
+import { eq } from "drizzle-orm";
+import { ChatCompletionMessageParam } from "openai/resources";
 
 dotenv.config();
 
@@ -27,29 +31,44 @@ const openai = new OpenAI({
 
 
 app.post('/register-user', async (req: Request, res: Response): Promise<any> => {
-    const { name, email } = req.body;
+    const { name, email } = req.body ?? {};
+
+    console.log('Content-Type:', req.headers['content-type'])
+    console.log('req.body:', req.body)
+
+    if (!name || !email) {
+        return res.status(400).json({ error: 'Name and email are required!' })
+    }
 
     try {
-        const userId = email.replace(/[^a-zA-Z0-9_-]/g, '-')
+        const userId = email.replace(/[^a-zA-Z0-9_-]/g, '_s')
 
         const userResponse = await chatClient.queryUsers({id: { $eq: userId}})
 
         if (!userResponse.users.length) {
             await chatClient.upsertUser({
-                id: userId,
-                name: name,
-                email: email,
-                role: 'user'
-            })
+            id: userId,
+            name: name,
+            email: email,
+            role: 'user'
+        } as any)
+        }
+
+        // check existing user in db
+        const existingUser = await db
+        .select()
+        .from(users)
+        .where(eq(users.userId, userId))
+
+        if (!existingUser.length) {
+            console.log('user', userId + ' doesnt exist in db')
+            await db.insert(users).values({userId, name, email})
         }
 
 
         res.status(200).json({userId, name, email})
     }
     catch (e) {
-        if (!name || !email) {
-            return res.status(400).json({errror: 'Name and email are required!'})
-        }
         res.status(500).json({error: 'Internal server error..'})
     }
 })
@@ -69,6 +88,17 @@ app.post('/chat', async(req: Request, res: Response): Promise<any> => {
             return res.status(404).json({error: 'User not found!'})
         }
 
+        // check user in db
+        const existingUser = await db
+            .select()
+            .from(users)
+            .where(eq(users.userId, userId))
+
+        if (!existingUser.length) {
+            return res.status(404).json({error: 'User not found in database, please register first!'})
+        }
+            
+
         const response = await openai.chat.completions.create({
             model: 'gpt-4',
             messages: [{role: 'user', content: message}]
@@ -76,12 +106,15 @@ app.post('/chat', async(req: Request, res: Response): Promise<any> => {
 
         const aiMessage: string = response.choices[0].message?.content ?? 'No response from AI';
 
+        // store chat in db
+        await db.insert(chats).values({userId, message, reply: aiMessage})
+
         // create channel 
 
         const channel = chatClient.channel('messaging', `chat-${userId}`, {
             name: 'AI Chat',
             created_by_id: 'ai_bit'
-        })
+        } as any)
 
         await channel.create();
         await channel.sendMessage({text: aiMessage, user_id: 'ai_bot'})
@@ -92,6 +125,29 @@ app.post('/chat', async(req: Request, res: Response): Promise<any> => {
     }
     catch {
         return res.status(500).json({error: 'Internal Server Error!'})
+    }
+})
+
+
+// chat history 
+app.post('/get-messages', async(req: Request, res: Response): Promise<any> => {
+    const { userId } = req.body;
+
+    if (!userId) {
+        return res.status(400).json({error: 'UserId is required'})
+    }
+
+    try {
+        const chatHistory = await db
+            .select()
+            .from(chats)
+            .where(eq(chats.userId, userId))
+
+        res.status(200).json({messages: chatHistory})    
+
+    } catch (e) {
+        console.log('Error fetching chat history...', e)
+        res.status(500).json({error: 'Inernal Server Error'})
     }
 })
 
